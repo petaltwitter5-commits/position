@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>腾讯地图定位示例</title>
+  <title>地图定位示例</title>
   <style>
     :root {
       color-scheme: light;
@@ -35,29 +35,6 @@
       z-index: 2;
     }
 
-    .controls {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      flex: 0 0 auto;
-    }
-
-    input {
-      width: min(360px, 38vw);
-      height: 38px;
-      border: 1px solid #c9d3e2;
-      border-radius: 8px;
-      padding: 0 12px;
-      font-size: 14px;
-      color: #172033;
-      outline: none;
-    }
-
-    input:focus {
-      border-color: #1769e0;
-      box-shadow: 0 0 0 3px rgb(23 105 224 / 14%);
-    }
-
     .title {
       min-width: 0;
     }
@@ -75,6 +52,43 @@
       line-height: 1.45;
       color: #516070;
       overflow-wrap: anywhere;
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex: 0 0 auto;
+    }
+
+    select,
+    input {
+      height: 38px;
+      border: 1px solid #c9d3e2;
+      border-radius: 8px;
+      padding: 0 12px;
+      font-size: 14px;
+      color: #172033;
+      background: #ffffff;
+      outline: none;
+    }
+
+    select:focus,
+    input:focus {
+      border-color: #1769e0;
+      box-shadow: 0 0 0 3px rgb(23 105 224 / 14%);
+    }
+
+    select {
+      width: 118px;
+    }
+
+    input {
+      width: min(300px, 28vw);
+    }
+
+    .hidden {
+      display: none;
     }
 
     button {
@@ -105,7 +119,7 @@
       height: calc(100vh - 76px);
     }
 
-    @media (max-width: 640px) {
+    @media (max-width: 860px) {
       .topbar {
         align-items: stretch;
         flex-direction: column;
@@ -117,16 +131,14 @@
         flex-direction: column;
       }
 
-      input {
-        width: 100%;
-      }
-
+      select,
+      input,
       button {
         width: 100%;
       }
 
       #map {
-        height: calc(100vh - 128px);
+        height: calc(100vh - 220px);
         min-height: 420px;
       }
     }
@@ -135,108 +147,223 @@
 <body>
   <header class="topbar">
     <div class="title">
-      <h1>腾讯地图定位示例</h1>
-      <p id="status">输入腾讯地图 Key 后加载地图。</p>
+      <h1>地图定位示例</h1>
+      <p id="status">选择地图服务并输入运行时 Key 后加载地图。</p>
     </div>
     <form class="controls" id="keyForm">
-      <input id="apiKeyInput" type="text" autocomplete="off" placeholder="腾讯地图 Key">
+      <select id="providerSelect" aria-label="地图服务">
+        <option value="tencent">腾讯地图</option>
+        <option value="amap">高德地图</option>
+      </select>
+      <input id="apiKeyInput" type="text" autocomplete="off" placeholder="地图 Key">
+      <input class="hidden" id="amapSecurityInput" type="text" autocomplete="off" placeholder="高德安全密钥，可选">
       <button class="secondary" id="loadMapBtn" type="submit">加载地图</button>
       <button id="locateBtn" type="button" disabled>定位到我</button>
     </form>
   </header>
 
-  <main id="map" aria-label="腾讯地图"></main>
+  <main id="map" aria-label="地图"></main>
 
   <script>
     const fallbackCenter = { latitude: 39.98412, longitude: 116.30748 };
     const keyForm = document.getElementById("keyForm");
+    const providerSelect = document.getElementById("providerSelect");
     const apiKeyInput = document.getElementById("apiKeyInput");
+    const amapSecurityInput = document.getElementById("amapSecurityInput");
     const loadMapBtn = document.getElementById("loadMapBtn");
     const statusEl = document.getElementById("status");
     const locateBtn = document.getElementById("locateBtn");
+    const mapEl = document.getElementById("map");
+
     let map = null;
     let marker = null;
+    let geocoder = null;
+    let loadedProvider = "";
     let currentKey = "";
+
+    const providers = {
+      tencent: {
+        label: "腾讯地图",
+        keyStorage: "tencent-map-demo-key",
+        placeholder: "腾讯地图 Key",
+      },
+      amap: {
+        label: "高德地图",
+        keyStorage: "amap-map-demo-key",
+        securityStorage: "amap-map-demo-security",
+        placeholder: "高德地图 JS API Key",
+      },
+    };
 
     function setStatus(message) {
       statusEl.textContent = message;
     }
 
-    function getSavedKey() {
-      const urlKey = new URLSearchParams(window.location.search).get("key");
-      return urlKey || localStorage.getItem("tencent-map-demo-key") || "";
+    function selectedProvider() {
+      return providerSelect.value;
     }
 
-    function loadTencentMapScript(key) {
+    function queryParams() {
+      return new URLSearchParams(window.location.search);
+    }
+
+    function scriptExists(id) {
+      return Boolean(document.getElementById(id));
+    }
+
+    function loadScript(id, src) {
       return new Promise((resolve, reject) => {
-        if (window.TMap) {
+        if (scriptExists(id)) {
           resolve();
           return;
         }
 
         const script = document.createElement("script");
-        script.src = `https://map.qq.com/api/gljs?v=1.exp&key=${encodeURIComponent(key)}`;
+        script.id = id;
+        script.src = src;
         script.onload = () => resolve();
-        script.onerror = () => reject(new Error("腾讯地图脚本加载失败"));
+        script.onerror = () => reject(new Error("地图脚本加载失败"));
         document.head.appendChild(script);
       });
     }
 
+    function getRuntimeKey(provider) {
+      const params = queryParams();
+      const queryKey = params.get(`${provider}Key`) || params.get("key");
+      return queryKey || localStorage.getItem(providers[provider].keyStorage) || "";
+    }
+
+    function getAmapSecurityCode() {
+      const params = queryParams();
+      return params.get("amapSecurityJsCode") || localStorage.getItem(providers.amap.securityStorage) || "";
+    }
+
+    function syncProviderFields() {
+      const provider = selectedProvider();
+      const config = providers[provider];
+      apiKeyInput.placeholder = config.placeholder;
+      apiKeyInput.value = getRuntimeKey(provider);
+      amapSecurityInput.classList.toggle("hidden", provider !== "amap");
+      amapSecurityInput.value = provider === "amap" ? getAmapSecurityCode() : "";
+      locateBtn.disabled = true;
+      setStatus(`输入${config.label} Key 后加载地图。`);
+    }
+
+    function resetMap() {
+      if (map && typeof map.destroy === "function") {
+        map.destroy();
+      }
+
+      map = null;
+      marker = null;
+      geocoder = null;
+      mapEl.innerHTML = "";
+      locateBtn.disabled = true;
+      loadedProvider = "";
+    }
+
+    function rememberRuntimeValues(provider, key) {
+      localStorage.setItem("map-demo-provider", provider);
+      localStorage.setItem(providers[provider].keyStorage, key);
+
+      if (provider === "amap") {
+        const securityCode = amapSecurityInput.value.trim();
+        if (securityCode) {
+          localStorage.setItem(providers.amap.securityStorage, securityCode);
+        }
+      }
+    }
+
+    async function loadTencentMap(key) {
+      await loadScript(
+        "tencent-map-js",
+        `https://map.qq.com/api/gljs?v=1.exp&key=${encodeURIComponent(key)}`
+      );
+    }
+
+    async function loadAmap(key) {
+      const securityCode = amapSecurityInput.value.trim();
+      if (securityCode) {
+        window._AMapSecurityConfig = { securityJsCode: securityCode };
+      }
+
+      await loadScript(
+        "amap-js",
+        `https://webapi.amap.com/maps?v=2.0&key=${encodeURIComponent(key)}&plugin=AMap.Geocoder`
+      );
+    }
+
+    function createTencentMap() {
+      const center = new TMap.LatLng(fallbackCenter.latitude, fallbackCenter.longitude);
+      map = new TMap.Map(mapEl, {
+        center,
+        zoom: 13,
+        pitch: 0,
+        rotation: 0,
+      });
+
+      marker = new TMap.MultiMarker({
+        map,
+        geometries: [],
+      });
+    }
+
+    function createAmap() {
+      const center = [fallbackCenter.longitude, fallbackCenter.latitude];
+      map = new AMap.Map("map", {
+        center,
+        zoom: 13,
+        resizeEnable: true,
+      });
+
+      marker = new AMap.Marker({
+        position: center,
+      });
+      map.add(marker);
+      marker.hide();
+      geocoder = new AMap.Geocoder();
+    }
+
     async function initMap(event) {
       event?.preventDefault();
+      const provider = selectedProvider();
+      const config = providers[provider];
       const key = apiKeyInput.value.trim();
 
       if (!key) {
-        setStatus("缺少腾讯地图 Key，地图未加载。");
+        setStatus(`缺少${config.label} Key，地图未加载。`);
         return;
       }
 
       loadMapBtn.disabled = true;
-      setStatus("正在加载腾讯地图。");
+      setStatus(`正在加载${config.label}。`);
 
       try {
+        resetMap();
         currentKey = key;
-        localStorage.setItem("tencent-map-demo-key", key);
-        await loadTencentMapScript(key);
+        rememberRuntimeValues(provider, key);
 
-        if (!map) {
-          const center = new TMap.LatLng(fallbackCenter.latitude, fallbackCenter.longitude);
-          map = new TMap.Map(document.getElementById("map"), {
-            center,
-            zoom: 13,
-            pitch: 0,
-            rotation: 0,
-          });
-
-          marker = new TMap.MultiMarker({
-            map,
-            geometries: [],
-          });
+        if (provider === "tencent") {
+          await loadTencentMap(key);
+          createTencentMap();
+        } else {
+          await loadAmap(key);
+          createAmap();
         }
 
+        loadedProvider = provider;
         locateBtn.disabled = false;
-        setStatus("地图已加载，点击“定位到我”开始获取当前位置。");
+        setStatus(`${config.label}已加载，点击“定位到我”开始获取当前位置。`);
       } catch (error) {
-        setStatus(`地图加载失败：${error.message}。`);
+        setStatus(`${config.label}加载失败：${error.message}。`);
       } finally {
         loadMapBtn.disabled = false;
       }
     }
 
-    function updateMarker(position) {
-      marker.setGeometries([
-        {
-          id: "current-location",
-          position,
-        },
-      ]);
-      map.setCenter(position);
-      map.setZoom(16);
-    }
-
     function requestJsonp(url, params) {
       return new Promise((resolve, reject) => {
-        const callbackName = `qqMapCallback_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+        const callbackName = `mapCallback_${Date.now()}_${Math.random().toString(16).slice(2)}`;
         const script = document.createElement("script");
         const query = new URLSearchParams({
           ...params,
@@ -264,7 +391,27 @@
       });
     }
 
-    async function reverseGeocode(latitude, longitude) {
+    function updateTencentMarker(latitude, longitude) {
+      const position = new TMap.LatLng(latitude, longitude);
+      marker.setGeometries([
+        {
+          id: "current-location",
+          position,
+        },
+      ]);
+      map.setCenter(position);
+      map.setZoom(16);
+    }
+
+    function updateAmapMarker(latitude, longitude) {
+      const position = [longitude, latitude];
+      marker.setPosition(position);
+      marker.show();
+      map.setCenter(position);
+      map.setZoom(16);
+    }
+
+    async function reverseGeocodeWithTencent(latitude, longitude) {
       const data = await requestJsonp("https://apis.map.qq.com/ws/geocoder/v1/", {
         location: `${latitude},${longitude}`,
         key: currentKey,
@@ -276,6 +423,36 @@
       }
 
       return data.result.address;
+    }
+
+    function reverseGeocodeWithAmap(latitude, longitude) {
+      return new Promise((resolve, reject) => {
+        geocoder.getAddress([longitude, latitude], (status, result) => {
+          if (status === "complete" && result.regeocode) {
+            resolve(result.regeocode.formattedAddress);
+            return;
+          }
+
+          reject(new Error(result?.info || "逆地址解析失败"));
+        });
+      });
+    }
+
+    async function reverseGeocode(latitude, longitude) {
+      if (loadedProvider === "tencent") {
+        return reverseGeocodeWithTencent(latitude, longitude);
+      }
+
+      return reverseGeocodeWithAmap(latitude, longitude);
+    }
+
+    function updateMarker(latitude, longitude) {
+      if (loadedProvider === "tencent") {
+        updateTencentMarker(latitude, longitude);
+        return;
+      }
+
+      updateAmapMarker(latitude, longitude);
     }
 
     function getCurrentPosition() {
@@ -304,9 +481,7 @@
 
       try {
         const { coords } = await getCurrentPosition();
-        const position = new TMap.LatLng(coords.latitude, coords.longitude);
-        updateMarker(position);
-
+        updateMarker(coords.latitude, coords.longitude);
         setStatus(`已定位：纬度 ${coords.latitude.toFixed(6)}，经度 ${coords.longitude.toFixed(6)}。正在解析地址。`);
 
         try {
@@ -322,12 +497,18 @@
       }
     }
 
-    const savedKey = getSavedKey();
-    if (savedKey) {
-      apiKeyInput.value = savedKey;
+    const params = queryParams();
+    providerSelect.value = params.get("provider") || localStorage.getItem("map-demo-provider") || "tencent";
+    syncProviderFields();
+
+    if (apiKeyInput.value.trim()) {
       initMap();
     }
 
+    providerSelect.addEventListener("change", () => {
+      resetMap();
+      syncProviderFields();
+    });
     keyForm.addEventListener("submit", initMap);
     locateBtn.addEventListener("click", locateMe);
   </script>
