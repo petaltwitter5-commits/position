@@ -4,17 +4,24 @@
 
 页面使用浏览器 `navigator.geolocation` 获取当前位置，在所选地图上居中并添加标记，同时调用对应地图服务做逆地址解析。
 
+定位已做两点优化：
+
+- 连续高精度采样，最多采样 8 次或 15 秒，取误差半径最小的一次。
+- 浏览器原生定位坐标按需从 WGS84 转为 GCJ-02，减少在腾讯地图和高德地图上的落点偏移。
+
 示例源码不内置地图 Key。页面运行时可在输入框填写 Key，也可使用 URL 参数传入：
 
 ```text
 http://localhost:5173/?provider=tencent&tencentKey=你的腾讯地图Key
-http://localhost:5173/?provider=amap&amapKey=你的高德地图Key
+http://localhost:5173/?provider=amap&amapKey=你的高德Web端JSAPIKey
 ```
 
-高德 JS API 2.0 的新 Key 可能还需要安全密钥，可在页面的“高德安全密钥”输入框填写，或通过 URL 参数传入：
+高德地图展示必须使用“Web端(JS API)”平台的 Key，不能使用“Web服务 API”平台的 Key。出现 `USERKEY_PLAT_NOMATCH` 时，含义就是当前 Key 与 JS API 平台不匹配。
+
+高德 JS API 2.0 的新 Key 通常还需要安全密钥，可在页面的“高德安全密钥”输入框填写，或通过 URL 参数传入：
 
 ```text
-http://localhost:5173/?provider=amap&amapKey=你的高德地图Key&amapSecurityJsCode=你的高德安全密钥
+http://localhost:5173/?provider=amap&amapKey=你的高德Web端JSAPIKey&amapSecurityJsCode=你的高德安全密钥
 ```
 
 ## 运行

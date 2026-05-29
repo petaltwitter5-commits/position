@@ -166,6 +166,17 @@
 
   <script>
     const fallbackCenter = { latitude: 39.98412, longitude: 116.30748 };
+    const LOCATION_TIMEOUT_MS = 15000;
+    const MAX_LOCATION_SAMPLES = 8;
+    const TARGET_ACCURACY_METERS = 35;
+    const LOCATION_OPTIONS = {
+      enableHighAccuracy: true,
+      timeout: LOCATION_TIMEOUT_MS,
+      maximumAge: 0,
+    };
+    const GCJ_PI = 3.14159265358979324;
+    const GCJ_A = 6378245.0;
+    const GCJ_EE = 0.00669342162296594323;
     const keyForm = document.getElementById("keyForm");
     const providerSelect = document.getElementById("providerSelect");
     const apiKeyInput = document.getElementById("apiKeyInput");
@@ -180,6 +191,7 @@
     let geocoder = null;
     let loadedProvider = "";
     let currentKey = "";
+    let AMapApi = null;
 
     const providers = {
       tencent: {
@@ -191,12 +203,61 @@
         label: "高德地图",
         keyStorage: "amap-map-demo-key",
         securityStorage: "amap-map-demo-security",
-        placeholder: "高德地图 JS API Key",
+        placeholder: "高德 Web端(JS API) Key",
       },
     };
 
     function setStatus(message) {
       statusEl.textContent = message;
+    }
+
+    function formatAccuracy(accuracy) {
+      if (!Number.isFinite(accuracy)) {
+        return "未知";
+      }
+
+      return accuracy >= 1000 ? `${(accuracy / 1000).toFixed(2)} 千米` : `${Math.round(accuracy)} 米`;
+    }
+
+    function outOfChina(latitude, longitude) {
+      return longitude < 72.004 || longitude > 137.8347 || latitude < 0.8293 || latitude > 55.8271;
+    }
+
+    function transformLatitude(x, y) {
+      let result = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * Math.sqrt(Math.abs(x));
+      result += (20.0 * Math.sin(6.0 * x * GCJ_PI) + 20.0 * Math.sin(2.0 * x * GCJ_PI)) * 2.0 / 3.0;
+      result += (20.0 * Math.sin(y * GCJ_PI) + 40.0 * Math.sin(y / 3.0 * GCJ_PI)) * 2.0 / 3.0;
+      result += (160.0 * Math.sin(y / 12.0 * GCJ_PI) + 320 * Math.sin(y * GCJ_PI / 30.0)) * 2.0 / 3.0;
+      return result;
+    }
+
+    function transformLongitude(x, y) {
+      let result = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * Math.sqrt(Math.abs(x));
+      result += (20.0 * Math.sin(6.0 * x * GCJ_PI) + 20.0 * Math.sin(2.0 * x * GCJ_PI)) * 2.0 / 3.0;
+      result += (20.0 * Math.sin(x * GCJ_PI) + 40.0 * Math.sin(x / 3.0 * GCJ_PI)) * 2.0 / 3.0;
+      result += (150.0 * Math.sin(x / 12.0 * GCJ_PI) + 300.0 * Math.sin(x / 30.0 * GCJ_PI)) * 2.0 / 3.0;
+      return result;
+    }
+
+    function wgs84ToGcj02(latitude, longitude) {
+      if (outOfChina(latitude, longitude)) {
+        return { latitude, longitude, converted: false };
+      }
+
+      let deltaLatitude = transformLatitude(longitude - 105.0, latitude - 35.0);
+      let deltaLongitude = transformLongitude(longitude - 105.0, latitude - 35.0);
+      const radLatitude = latitude / 180.0 * GCJ_PI;
+      let magic = Math.sin(radLatitude);
+      magic = 1 - GCJ_EE * magic * magic;
+      const sqrtMagic = Math.sqrt(magic);
+      deltaLatitude = (deltaLatitude * 180.0) / ((GCJ_A * (1 - GCJ_EE)) / (magic * sqrtMagic) * GCJ_PI);
+      deltaLongitude = (deltaLongitude * 180.0) / (GCJ_A / sqrtMagic * Math.cos(radLatitude) * GCJ_PI);
+
+      return {
+        latitude: latitude + deltaLatitude,
+        longitude: longitude + deltaLongitude,
+        converted: true,
+      };
     }
 
     function selectedProvider() {
@@ -257,6 +318,7 @@
       map = null;
       marker = null;
       geocoder = null;
+      AMapApi = null;
       mapEl.innerHTML = "";
       locateBtn.disabled = true;
       loadedProvider = "";
@@ -288,9 +350,28 @@
       }
 
       await loadScript(
-        "amap-js",
-        `https://webapi.amap.com/maps?v=2.0&key=${encodeURIComponent(key)}&plugin=AMap.Geocoder`
+        "amap-loader-js",
+        "https://webapi.amap.com/loader.js"
       );
+
+      try {
+        AMapApi = await window.AMapLoader.load({
+          key,
+          version: "2.0",
+          plugins: ["AMap.Geocoder"],
+        });
+      } catch (error) {
+        const message = String(error?.message || error);
+        if (message.includes("USERKEY_PLAT_NOMATCH")) {
+          throw new Error("高德 Key 平台类型不匹配，请使用 Web端(JS API) Key");
+        }
+
+        if (message.includes("INVALID_USER_SCODE")) {
+          throw new Error("高德安全密钥未通过验证，请填写与该 Key 匹配的安全密钥");
+        }
+
+        throw new Error(message || "高德地图加载失败");
+      }
     }
 
     function createTencentMap() {
@@ -310,18 +391,18 @@
 
     function createAmap() {
       const center = [fallbackCenter.longitude, fallbackCenter.latitude];
-      map = new AMap.Map("map", {
+      map = new AMapApi.Map("map", {
         center,
         zoom: 13,
         resizeEnable: true,
       });
 
-      marker = new AMap.Marker({
+      marker = new AMapApi.Marker({
         position: center,
       });
       map.add(marker);
       marker.hide();
-      geocoder = new AMap.Geocoder();
+      geocoder = new AMapApi.Geocoder();
     }
 
     async function initMap(event) {
@@ -455,18 +536,79 @@
       updateAmapMarker(latitude, longitude);
     }
 
-    function getCurrentPosition() {
+    function getBestPosition() {
       return new Promise((resolve, reject) => {
         if (!navigator.geolocation) {
           reject(new Error("当前浏览器不支持定位能力"));
           return;
         }
 
-        navigator.geolocation.getCurrentPosition(resolve, reject, {
-          enableHighAccuracy: true,
-          timeout: 12000,
-          maximumAge: 0,
-        });
+        let bestPosition = null;
+        let sampleCount = 0;
+        let lastError = null;
+        let settled = false;
+        let watchId = null;
+
+        function isBetterPosition(position) {
+          const bestAccuracy = bestPosition?.coords?.accuracy;
+          const nextAccuracy = position?.coords?.accuracy;
+          return !bestPosition || !Number.isFinite(bestAccuracy) || nextAccuracy < bestAccuracy;
+        }
+
+        function cleanup() {
+          if (watchId !== null) {
+            navigator.geolocation.clearWatch(watchId);
+          }
+          window.clearTimeout(timeoutId);
+        }
+
+        function finish() {
+          if (settled) {
+            return;
+          }
+
+          settled = true;
+          cleanup();
+
+          if (bestPosition) {
+            resolve({
+              position: bestPosition,
+              samples: sampleCount,
+            });
+            return;
+          }
+
+          reject(lastError || new Error("无法获取当前位置"));
+        }
+
+        const timeoutId = window.setTimeout(finish, LOCATION_TIMEOUT_MS);
+
+        watchId = navigator.geolocation.watchPosition(
+          (position) => {
+            sampleCount += 1;
+
+            if (isBetterPosition(position)) {
+              bestPosition = position;
+            }
+
+            const accuracy = bestPosition.coords.accuracy;
+            setStatus(`正在高精度定位：已采样 ${sampleCount} 次，当前最佳误差约 ${formatAccuracy(accuracy)}。`);
+
+            if (
+              sampleCount >= MAX_LOCATION_SAMPLES ||
+              (sampleCount >= 2 && Number.isFinite(accuracy) && accuracy <= TARGET_ACCURACY_METERS)
+            ) {
+              finish();
+            }
+          },
+          (error) => {
+            lastError = error;
+            if (!bestPosition) {
+              setStatus(`定位暂未成功：${error.message || "等待下一次定位结果"}。`);
+            }
+          },
+          LOCATION_OPTIONS
+        );
       });
     }
 
@@ -477,23 +619,29 @@
       }
 
       locateBtn.disabled = true;
-      setStatus("正在请求浏览器定位授权。");
+      locateBtn.textContent = "定位中";
+      setStatus("正在请求浏览器定位授权，并连续采样以选择最佳精度。");
 
       try {
-        const { coords } = await getCurrentPosition();
-        updateMarker(coords.latitude, coords.longitude);
-        setStatus(`已定位：纬度 ${coords.latitude.toFixed(6)}，经度 ${coords.longitude.toFixed(6)}。正在解析地址。`);
+        const { position, samples } = await getBestPosition();
+        const { coords } = position;
+        const mapCoords = wgs84ToGcj02(coords.latitude, coords.longitude);
+        const convertedText = mapCoords.converted ? "已转换为国内地图坐标" : "未做坐标转换";
+
+        updateMarker(mapCoords.latitude, mapCoords.longitude);
+        setStatus(`已采样 ${samples} 次，最佳误差约 ${formatAccuracy(coords.accuracy)}，${convertedText}。正在解析地址。`);
 
         try {
-          const address = await reverseGeocode(coords.latitude, coords.longitude);
-          setStatus(`已定位：${address}，纬度 ${coords.latitude.toFixed(6)}，经度 ${coords.longitude.toFixed(6)}。`);
+          const address = await reverseGeocode(mapCoords.latitude, mapCoords.longitude);
+          setStatus(`已定位：${address}。误差约 ${formatAccuracy(coords.accuracy)}，地图坐标 ${mapCoords.latitude.toFixed(6)}，${mapCoords.longitude.toFixed(6)}。`);
         } catch (error) {
-          setStatus(`已定位坐标，地址解析未完成：${error.message}。`);
+          setStatus(`已定位坐标，地址解析未完成：${error.message}。误差约 ${formatAccuracy(coords.accuracy)}，地图坐标 ${mapCoords.latitude.toFixed(6)}，${mapCoords.longitude.toFixed(6)}。`);
         }
       } catch (error) {
         setStatus(`定位失败：${error.message || "浏览器拒绝或无法获取当前位置"}。`);
       } finally {
         locateBtn.disabled = false;
+        locateBtn.textContent = "定位到我";
       }
     }
 
