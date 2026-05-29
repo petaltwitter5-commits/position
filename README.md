@@ -8,20 +8,20 @@
 
 - 连续高精度采样，最多采样 8 次或 15 秒，取误差半径最小的一次。
 - 页面显示原始坐标、地图坐标和误差半径，便于判断偏差来源。
-- 坐标模式默认使用浏览器原始坐标，也可切换为 WGS84 -> GCJ-02，排查国内地图坐标系偏移。
+- 坐标模式默认使用 WGS84 -> GCJ-02 转换，避免国内地图底图上的系统性偏移。
 
 示例源码不内置地图 Key。页面运行时可在输入框填写 Key，也可使用 URL 参数传入：
 
 ```text
 http://localhost:5173/?provider=tencent&tencentKey=你的腾讯地图Key
 http://localhost:5173/?provider=amap&amapKey=你的高德Web端JSAPIKey
-http://localhost:5173/?provider=amap&coordinate=gcj&amapKey=你的高德Web端JSAPIKey
+http://localhost:5173/?provider=amap&coordinate=raw&amapKey=你的高德Web端JSAPIKey
 ```
 
 坐标模式参数：
 
-- `coordinate=raw`：使用浏览器返回的原始坐标，当前默认值。
-- `coordinate=gcj`：把原始坐标按 WGS84 -> GCJ-02 转换后再落到地图上。
+- `coordinate=gcj`：把原始坐标按 WGS84 -> GCJ-02 转换后再落到地图上，当前默认值。
+- `coordinate=raw`：使用浏览器返回的原始坐标，用于对照诊断。
 
 高德地图展示必须使用“Web端(JS API)”平台的 Key，不能使用“Web服务 API”平台的 Key。出现 `USERKEY_PLAT_NOMATCH` 时，含义就是当前 Key 与 JS API 平台不匹配。
 

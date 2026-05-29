@@ -152,7 +152,7 @@
   <header class="topbar">
     <div class="title">
       <h1>地图定位示例</h1>
-      <p id="status">选择地图服务并输入运行时 Key 后加载地图。</p>
+      <p id="status">选择地图服务并输入运行时 Key 后加载地图，默认转 GCJ-02。</p>
     </div>
     <form class="controls" id="keyForm">
       <select id="providerSelect" aria-label="地图服务">
@@ -160,8 +160,8 @@
         <option value="amap">高德地图</option>
       </select>
       <select class="coordinate-select" id="coordinateModeSelect" aria-label="坐标模式">
-        <option value="raw">原始坐标</option>
         <option value="gcj">转 GCJ-02</option>
+        <option value="raw">原始坐标</option>
       </select>
       <input id="apiKeyInput" type="text" autocomplete="off" placeholder="地图 Key">
       <input class="hidden" id="amapSecurityInput" type="text" autocomplete="off" placeholder="高德安全密钥，可选">
@@ -278,6 +278,11 @@
       return coordinateModeSelect.value;
     }
 
+    function initialCoordinateMode() {
+      const mode = queryParams().get("coordinate");
+      return mode === "raw" || mode === "gcj" ? mode : "gcj";
+    }
+
     function queryParams() {
       return new URLSearchParams(window.location.search);
     }
@@ -389,7 +394,6 @@
     function rememberRuntimeValues(provider, key) {
       localStorage.setItem("map-demo-provider", provider);
       localStorage.setItem(providers[provider].keyStorage, key);
-      localStorage.setItem("map-demo-coordinate-mode", selectedCoordinateMode());
 
       if (provider === "amap") {
         const securityCode = amapSecurityInput.value.trim();
@@ -728,7 +732,7 @@
 
     const params = queryParams();
     providerSelect.value = params.get("provider") || localStorage.getItem("map-demo-provider") || "tencent";
-    coordinateModeSelect.value = params.get("coordinate") || localStorage.getItem("map-demo-coordinate-mode") || "raw";
+    coordinateModeSelect.value = initialCoordinateMode();
     syncProviderFields();
 
     if (apiKeyInput.value.trim()) {
@@ -740,7 +744,6 @@
       syncProviderFields();
     });
     coordinateModeSelect.addEventListener("change", () => {
-      localStorage.setItem("map-demo-coordinate-mode", selectedCoordinateMode());
       if (lastLocationResult) {
         applyLocationResult(lastLocationResult, false);
       }
