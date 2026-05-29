@@ -4,10 +4,6 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>腾讯地图定位示例</title>
-  <script>
-    window.TENCENT_MAP_KEY = "ZDJBZ-GXYCH-IVTDI-WYE4C-4UGBV-VRFK2";
-  </script>
-  <script src="https://map.qq.com/api/gljs?v=1.exp&key=ZDJBZ-GXYCH-IVTDI-WYE4C-4UGBV-VRFK2"></script>
   <style>
     :root {
       color-scheme: light;
@@ -37,6 +33,29 @@
       border-bottom: 1px solid #dde3ef;
       box-shadow: 0 2px 12px rgb(22 34 51 / 8%);
       z-index: 2;
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex: 0 0 auto;
+    }
+
+    input {
+      width: min(360px, 38vw);
+      height: 38px;
+      border: 1px solid #c9d3e2;
+      border-radius: 8px;
+      padding: 0 12px;
+      font-size: 14px;
+      color: #172033;
+      outline: none;
+    }
+
+    input:focus {
+      border-color: #1769e0;
+      box-shadow: 0 0 0 3px rgb(23 105 224 / 14%);
     }
 
     .title {
@@ -70,6 +89,11 @@
       cursor: pointer;
     }
 
+    button.secondary {
+      background: #edf2f8;
+      color: #1f2d3d;
+    }
+
     button:disabled {
       cursor: progress;
       opacity: .72;
@@ -88,6 +112,15 @@
         padding: 12px;
       }
 
+      .controls {
+        align-items: stretch;
+        flex-direction: column;
+      }
+
+      input {
+        width: 100%;
+      }
+
       button {
         width: 100%;
       }
@@ -103,32 +136,91 @@
   <header class="topbar">
     <div class="title">
       <h1>腾讯地图定位示例</h1>
-      <p id="status">正在初始化地图。</p>
+      <p id="status">输入腾讯地图 Key 后加载地图。</p>
     </div>
-    <button id="locateBtn" type="button">定位到我</button>
+    <form class="controls" id="keyForm">
+      <input id="apiKeyInput" type="text" autocomplete="off" placeholder="腾讯地图 Key">
+      <button class="secondary" id="loadMapBtn" type="submit">加载地图</button>
+      <button id="locateBtn" type="button" disabled>定位到我</button>
+    </form>
   </header>
 
   <main id="map" aria-label="腾讯地图"></main>
 
   <script>
-    const fallbackCenter = new TMap.LatLng(39.98412, 116.30748);
-    const map = new TMap.Map(document.getElementById("map"), {
-      center: fallbackCenter,
-      zoom: 13,
-      pitch: 0,
-      rotation: 0,
-    });
-
-    const marker = new TMap.MultiMarker({
-      map,
-      geometries: [],
-    });
-
+    const fallbackCenter = { latitude: 39.98412, longitude: 116.30748 };
+    const keyForm = document.getElementById("keyForm");
+    const apiKeyInput = document.getElementById("apiKeyInput");
+    const loadMapBtn = document.getElementById("loadMapBtn");
     const statusEl = document.getElementById("status");
     const locateBtn = document.getElementById("locateBtn");
+    let map = null;
+    let marker = null;
+    let currentKey = "";
 
     function setStatus(message) {
       statusEl.textContent = message;
+    }
+
+    function getSavedKey() {
+      const urlKey = new URLSearchParams(window.location.search).get("key");
+      return urlKey || localStorage.getItem("tencent-map-demo-key") || "";
+    }
+
+    function loadTencentMapScript(key) {
+      return new Promise((resolve, reject) => {
+        if (window.TMap) {
+          resolve();
+          return;
+        }
+
+        const script = document.createElement("script");
+        script.src = `https://map.qq.com/api/gljs?v=1.exp&key=${encodeURIComponent(key)}`;
+        script.onload = () => resolve();
+        script.onerror = () => reject(new Error("腾讯地图脚本加载失败"));
+        document.head.appendChild(script);
+      });
+    }
+
+    async function initMap(event) {
+      event?.preventDefault();
+      const key = apiKeyInput.value.trim();
+
+      if (!key) {
+        setStatus("缺少腾讯地图 Key，地图未加载。");
+        return;
+      }
+
+      loadMapBtn.disabled = true;
+      setStatus("正在加载腾讯地图。");
+
+      try {
+        currentKey = key;
+        localStorage.setItem("tencent-map-demo-key", key);
+        await loadTencentMapScript(key);
+
+        if (!map) {
+          const center = new TMap.LatLng(fallbackCenter.latitude, fallbackCenter.longitude);
+          map = new TMap.Map(document.getElementById("map"), {
+            center,
+            zoom: 13,
+            pitch: 0,
+            rotation: 0,
+          });
+
+          marker = new TMap.MultiMarker({
+            map,
+            geometries: [],
+          });
+        }
+
+        locateBtn.disabled = false;
+        setStatus("地图已加载，点击“定位到我”开始获取当前位置。");
+      } catch (error) {
+        setStatus(`地图加载失败：${error.message}。`);
+      } finally {
+        loadMapBtn.disabled = false;
+      }
     }
 
     function updateMarker(position) {
@@ -175,7 +267,7 @@
     async function reverseGeocode(latitude, longitude) {
       const data = await requestJsonp("https://apis.map.qq.com/ws/geocoder/v1/", {
         location: `${latitude},${longitude}`,
-        key: window.TENCENT_MAP_KEY,
+        key: currentKey,
         get_poi: "0",
       });
 
@@ -202,6 +294,11 @@
     }
 
     async function locateMe() {
+      if (!map || !marker) {
+        setStatus("地图未加载，先加载地图。");
+        return;
+      }
+
       locateBtn.disabled = true;
       setStatus("正在请求浏览器定位授权。");
 
@@ -225,8 +322,14 @@
       }
     }
 
+    const savedKey = getSavedKey();
+    if (savedKey) {
+      apiKeyInput.value = savedKey;
+      initMap();
+    }
+
+    keyForm.addEventListener("submit", initMap);
     locateBtn.addEventListener("click", locateMe);
-    setStatus("地图已加载，点击“定位到我”开始获取当前位置。");
   </script>
 </body>
 </html>
